@@ -3,146 +3,70 @@ from ultralytics import YOLO
 import cv2
 import time
 import numpy as np
-from utils.visualizer import draw_box, draw_fps, draw_status_info
+import json
+from datetime import datetime
+from jinja2 import Environment, FileSystemLoader
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
-# Load YOLO model
-model = YOLO("yolov8s.pt")
 
-# Load video
-video_path = "input/test_video1.mp4"
+model = YOLO("yolov8s.pt")
+video_path = "G:/Object_monitoring_MacV/input/macv-obj-tracking-video.mp4"
 cap = cv2.VideoCapture(video_path)
 
-# Output video writer setup
-output_path = "output/processed_output.mp4"
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-fps_out = cap.get(cv2.CAP_PROP_FPS)
+fps = cap.get(cv2.CAP_PROP_FPS)
+total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+video_duration = total_frames / fps
+frame_time = 1.0 / fps
+
+output_path = "G:/Object_monitoring_MacV/output/processed_output.mp4"
+fourcc = cv2.VideoWriter_fourcc(*'avc1')
 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-out = cv2.VideoWriter(output_path, fourcc, fps_out, (frame_width, frame_height))
+out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
-# Object tracking history
-prev_tracks = {}
 current_tracks = {}
 track_history = {}
-missing_tracks = {}
-new_tracks = {}
-object_features = {}
-
-# Enhanced re-identification parameters
-missing_threshold = 15
-reappear_window = 1000
-reidentification_threshold = 0.65
+object_times = {}
+object_centroids = {}
+next_id = 1
+id_colors = {}
 fps_list = []
 
-# Keep track of "true" object IDs
-next_true_id = 1
-track_to_true_id = {}
-class_instance_count = {}
-true_id_colors = {}
-
 frame_count = 0
+start_time = time.time()
 
-def extract_features(frame, box):
+def calculate_centroid(box):
     x1, y1, x2, y2 = box
-    try:
-        if x1 >= x2 or y1 >= y2 or x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
-            return None
-            
-        roi = frame[y1:y2, x1:x2]
-        if roi.size == 0:
-            return None
-            
-        resized = cv2.resize(roi, (64, 64))
-        
-        hist_color = cv2.calcHist([resized], [0, 1, 2], None, [16, 16, 16], 
-                                [0, 256, 0, 256, 0, 256])
-        hist_color = cv2.normalize(hist_color, hist_color).flatten()
-        
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 100, 200)
-        hist_edges = cv2.calcHist([edges], [0], None, [32], [0, 256])
-        hist_edges = cv2.normalize(hist_edges, hist_edges).flatten()
-        
-        features = np.concatenate((hist_color, hist_edges))
-        return features
-        
-    except Exception as e:
-        print(f"Feature extraction error: {e}")
-        return None
+    return (int((x1 + x2) / 2), int((y1 + y2) / 2))
 
-def compare_features(features1, features2):
-    if features1 is None or features2 is None:
-        return 0
-    try:
-        correlation = cv2.compareHist(features1[:256], features2[:256], cv2.HISTCMP_CORREL)
-        
-        if len(features1) > 256 and len(features2) > 256:
-            edge_similarity = cv2.compareHist(features1[256:], features2[256:], cv2.HISTCMP_CORREL)
-            return 0.7 * correlation + 0.3 * edge_similarity
-        return correlation
-    except Exception as e:
-        print(f"Feature comparison error: {e}")
-        return 0
-
-def get_true_id(track_id, label, features, frame_count):
-    global next_true_id
-    
-    if track_id in track_to_true_id:
-        return track_to_true_id[track_id]
-    
-    best_match_id = None
-    best_match_score = reidentification_threshold
-    
-    for old_track_id, info in list(missing_tracks.items()):
-        if info['label'] != label:
-            continue
-        if frame_count - info['frame'] > reappear_window:
-            continue
-        if 'features' in info and info['features'] is not None and features is not None:
-            similarity = compare_features(features, info['features'])
-            if similarity > best_match_score:
-                best_match_score = similarity
-                best_match_id = track_to_true_id.get(old_track_id)
-                if similarity > 0.85:
-                    break
-    
-    if best_match_id is not None:
-        print(f"Re-identified {label} as true ID #{best_match_id} (similarity: {best_match_score:.2f})")
-        track_to_true_id[track_id] = best_match_id
-        return best_match_id
-        
-    true_id = next_true_id
-    next_true_id += 1
-    true_id_colors[true_id] = (
-        int((true_id * 57) % 255),
-        int((true_id * 121) % 255),
-        int((true_id * 233) % 255)
-    )
-    track_to_true_id[track_id] = true_id
-    if label not in class_instance_count:
-        class_instance_count[label] = 1
-    else:
-        class_instance_count[label] += 1
-    return true_id
+def draw_trail(frame, track_id, color):
+    if track_id in track_history and len(track_history[track_id]) > 1:
+        points = []
+        for box in track_history[track_id]:
+            centroid = calculate_centroid(box)
+            points.append(centroid)
+        for i in range(1, len(points)):
+            cv2.line(frame, points[i-1], points[i], color, 2)
 
 print(f"Processing video: {video_path}")
-print(f"Stats: {frame_height}x{frame_width} at {fps_out} FPS")
+print(f"Stats: {frame_height}x{frame_width} at {fps} FPS")
+print(f"Total frames: {total_frames}, Duration: {video_duration:.2f} seconds")
 
 try:
     model.tracker = "botsort.yaml"
-    model.conf = 0.5  
-    model.iou = 0.4   
+    model.conf = 0.5
+    model.iou = 0.4
 except Exception as e:
     print(f"Warning: Could not set tracker parameters: {e}")
     print("Continuing with default tracker...")
 
 while cap.isOpened():
-    start_time = time.time()
     ret, frame = cap.read()
     if not ret:
         break
     frame_count += 1
+    current_time = frame_count * frame_time
+    
     results = model.track(frame, persist=True, verbose=False)
     current_tracks = {}
     
@@ -151,89 +75,66 @@ while cap.isOpened():
         track_ids = results[0].boxes.id.cpu().numpy().astype(int)
         classes = results[0].boxes.cls.cpu().numpy().astype(int)
         confs = results[0].boxes.conf.cpu().numpy()
+        
         for box, track_id, cls_id, conf in zip(boxes, track_ids, classes, confs):
             x1, y1, x2, y2 = box
             label = results[0].names[cls_id]
             width = x2 - x1
             height = y2 - y1
-            features = extract_features(frame, (x1, y1, x2, y2))
-            true_id = get_true_id(track_id, label, features, frame_count)
+            
+            centroid = calculate_centroid((x1, y1, x2, y2))
             
             current_tracks[track_id] = {
                 'box': (x1, y1, width, height),
                 'label': label,
                 'last_seen': frame_count,
-                'features': features,
                 'confidence': conf,
-                'true_id': true_id
+                'centroid': centroid
             }
             
-            if true_id not in track_history:
-                track_history[true_id] = []
-                
-                if frame_count > 5:  
-                    if track_id not in prev_tracks and true_id not in [info.get('true_id') for info in prev_tracks.values()]:
-                        new_tracks[true_id] = {
-                            'label': label,
-                            'frame': frame_count,
-                            'time': time.time(),
-                            'features': features
-                        }
-                        print(f"New {label} detected: True ID #{true_id}")
-            
-            if len(track_history[true_id]) > 30:
-                track_history[true_id].pop(0)
-            track_history[true_id].append((x1, y1, x2, y2))
-            if true_id in object_features and object_features[true_id] is not None and features is not None:
-                object_features[true_id] = 0.7 * object_features[true_id] + 0.3 * features
-            else:
-                object_features[true_id] = features
-            try:
-                draw_box(
-                    frame, 
-                    true_id,
-                    x1, y1, 
-                    width, height, 
-                    label=label, 
-                    color=true_id_colors.get(true_id, (0, 255, 0))
+            if track_id not in object_times:
+                object_times[track_id] = {
+                    'start_frame': frame_count,
+                    'start_time': current_time,
+                    'total_time': 0
+                }
+                id_colors[track_id] = (
+                    int((track_id * 57) % 255),
+                    int((track_id * 121) % 255),
+                    int((track_id * 233) % 255)
                 )
-            except Exception as e:
-                print(f"Error drawing box: {e}")
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} #{true_id}", (x1, y1-10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                
-    for track_id, info in prev_tracks.items():
-        if track_id not in current_tracks:
-            true_id = info.get('true_id')
-            if true_id and true_id not in [t.get('true_id') for t in current_tracks.values()]:
-                if true_id not in missing_tracks:
-                    last_seen = info['last_seen']
-                    if frame_count - last_seen >= missing_threshold:
-                        missing_tracks[track_id] = {
-                            'label': info['label'],
-                            'frame': frame_count,
-                            'time': time.time(),
-                            'features': info.get('features'),
-                            'true_id': true_id
-                        }
-                        print(f"{info['label']} missing: True ID #{true_id}")
-                    else:
-                        current_tracks[track_id] = info
-    active_ids = set(info.get('true_id') for info in current_tracks.values())
-    missing_ids = set(info.get('true_id') for info in missing_tracks.values())
-    new_object_ids = set(new_tracks.keys())
-    try:
-        draw_status_info(frame, len(active_ids), len(new_object_ids), len(missing_ids))
-    except Exception as e:
-        print(f"Error drawing status info: {e}")
-    prev_tracks = current_tracks.copy()
-    fps = 1 / (time.time() - start_time)
-    fps_list.append(fps)
-    try:
-        draw_fps(frame, fps)
-    except Exception as e:
-        print(f"Error drawing FPS: {e}")
+            else:
+                object_times[track_id]['total_time'] = current_time - object_times[track_id]['start_time']
+            
+            if track_id not in track_history:
+                track_history[track_id] = []
+            
+            if len(track_history[track_id]) > 30:
+                track_history[track_id].pop(0)
+            track_history[track_id].append((x1, y1, x2, y2))
+            
+            color = id_colors[track_id]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            cv2.circle(frame, centroid, 4, color, -1)
+            draw_trail(frame, track_id, color)
+            
+            time_str = f"Time: {object_times[track_id]['total_time']:.1f}s"
+            cv2.putText(frame, time_str, (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    active_count = len(current_tracks)
+    unique_count = len(track_history)
+    
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (frame_width - 300, 10), (frame_width - 10, 80), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+    
+    cv2.putText(frame, f"Active Objects: {active_count}", (frame_width - 280, 40), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(frame, f"Unique Objects: {unique_count}", (frame_width - 280, 70), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
     try:
         resized = cv2.resize(frame, (960, 540))
         cv2.imshow("Object Monitor", resized)
@@ -242,29 +143,41 @@ while cap.isOpened():
     out.write(frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
+
 cap.release()
 out.release()
 cv2.destroyAllWindows()
 
 class_totals = {}
-for true_id in track_history:
-    label = None
-    for info in current_tracks.values():
-        if info.get('true_id') == true_id:
-            label = info['label']
-            break
-    if not label:
-        for info in missing_tracks.values():
-            if info.get('true_id') == true_id:
-                label = info['label']
-                break
-    if label:
-        class_totals[label] = class_totals.get(label, 0) + 1
+for track_id, info in current_tracks.items():
+    label = info['label']
+    class_totals[label] = class_totals.get(label, 0) + 1
 
-avg_fps = sum(fps_list) / len(fps_list) if fps_list else 0
-print(f"\nAverage FPS: {avg_fps:.2f}")
-print(f"Total Unique Objects: {len(track_history)}")
+env = Environment(loader=FileSystemLoader('templates'))
+template = env.get_template('report.html')
+
+video_filename = os.path.basename(output_path)
+html_content = template.render(
+    video_path=video_filename,
+    total_objects=len(track_history),
+    unique_objects=len(set(track_id for track_id in track_history.keys())),
+    active_objects=len(current_tracks),
+    average_fps=fps,
+    class_totals=class_totals
+)
+
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+html_path = os.path.join(os.path.dirname(output_path), 'index.html')
+with open(html_path, 'w') as f:
+    f.write(html_content)
+
+print(f"\nVideo FPS: {fps}")
+print(f"Total Objects Tracked: {len(track_history)}")
+print(f"Active Objects: {len(current_tracks)}")
 print(f"Objects by class: {class_totals}")
-print(f"New Objects Detected: {len(set(new_tracks.keys()))}")
-print(f"Objects Gone Missing: {len(set(info.get('true_id') for info in missing_tracks.values()))}")
 print(f"Output video saved at: {output_path}")
+print(f"HTML report generated at: {html_path}")
+print("\nTo view the results:")
+print(f"1. Open {html_path} in your web browser")
+print("2. If the video doesn't play, try using a different browser (Chrome or Firefox recommended)")

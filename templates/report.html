@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Object Tracking Results</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f2f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .video-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+        .stats {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        h1, h2 {
+            color: #1a73e8;
+            margin-bottom: 20px;
+        }
+        .metric-card {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .metric-title {
+            font-weight: bold;
+            color: #5f6368;
+            margin-bottom: 5px;
+        }
+        .metric-value {
+            font-size: 1.2em;
+            color: #202124;
+        }
+        video {
+            max-width: 100%;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .class-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .timestamp {
+            color: #5f6368;
+            font-size: 0.9em;
+            text-align: right;
+            margin-top: 20px;
+        }
+        .active-objects {
+            background: #e8f0fe;
+            border-left: 4px solid #1a73e8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Object Tracking Results</h1>
+        
+        <div class="video-container">
+            <video width="960" height="540" controls>
+                <source src="{{ video_path }}" type="video/mp4" />
+                <source src="{{ video_path }}" type="video/quicktime" />
+                Your browser does not support the video tag.
+            </video>
+        </div>
+
+        <div class="stats">
+            <h2>Tracking Statistics</h2>
+            
+            <div class="metric-card active-objects">
+                <div class="metric-title">Active Objects</div>
+                <div class="metric-value">{{ active_objects }}</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">Total Unique Objects</div>
+                <div class="metric-value">{{ unique_objects }}</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">Total Objects Tracked</div>
+                <div class="metric-value">{{ total_objects }}</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">Average FPS</div>
+                <div class="metric-value">{{ average_fps }} FPS</div>
+            </div>
+
+            <h3>Objects by Class</h3>
+            <div class="class-stats">
+                {% for class_name, count in class_totals.items() %}
+                <div class="metric-card">
+                    <div class="metric-title">{{ class_name }}</div>
+                    <div class="metric-value">{{ count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</body>
+</html> 
