@@ -34,22 +34,18 @@ if 'model' not in st.session_state:
 if 'temp_files' not in st.session_state:
     st.session_state.temp_files = []
 
-def load_model():
+def load_model(model_size="small"):
     if st.session_state.model is None:
         with st.spinner("Loading YOLO model..."):
             try:
-                # Initialize model without explicit device selection
-                st.session_state.model = YOLO("yolov8s.pt")
-                # Set model parameters
+                # Use the selected model size
+                model_path = f"yolov8{model_size[0]}.pt"  # 'n' for nano, 's' for small
+                st.session_state.model = YOLO(model_path)
                 st.session_state.model.conf = 0.5
                 st.session_state.model.iou = 0.4
             except Exception as e:
                 st.error(f"Error loading model: {str(e)}")
                 return None
-            # Set device to CPU to avoid CUDA issues
-            device = 'cpu'
-            st.session_state.model = YOLO("yolov8s.pt")
-            st.session_state.model.to(device)
     return st.session_state.model
 
 def cleanup_temp_files():
@@ -264,8 +260,8 @@ def main():
     uploaded_file = st.file_uploader("Choose a video file", type=['mp4', 'avi', 'mov'])
     
     if uploaded_file is not None:
-        # Load YOLO model
-        model = load_model()
+        # Load YOLO model with selected size
+        model = load_model(model_size)
         
         # Process video
         if st.button("Process Video"):
