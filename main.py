@@ -53,7 +53,7 @@ print(f"Stats: {frame_height}x{frame_width} at {fps} FPS")
 print(f"Total frames: {total_frames}, Duration: {video_duration:.2f} seconds")
 
 try:
-    model.tracker = "botsort.yaml"
+    model.tracker = "botsort"
     model.conf = 0.5
     model.iou = 0.4
 except Exception as e:
