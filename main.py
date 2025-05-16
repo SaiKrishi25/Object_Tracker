@@ -108,7 +108,6 @@ while cap.isOpened():
             
             if track_id not in track_history:
                 track_history[track_id] = []
-            
             if len(track_history[track_id]) > 30:
                 track_history[track_id].pop(0)
             track_history[track_id].append((x1, y1, x2, y2))
