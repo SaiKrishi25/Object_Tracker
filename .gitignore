@@ -43,7 +43,6 @@ Thumbs.db
 
 # Project specific
 *.pt
-output/
 streamlit_outputs/
 input/*.mp4
 *.mp4
